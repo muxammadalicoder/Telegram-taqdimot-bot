@@ -2,3 +2,6 @@ flask
 pyTelegramBotAPI
 google-generativeai
 gunicorn
+python-pptx
+pillow
+requests
