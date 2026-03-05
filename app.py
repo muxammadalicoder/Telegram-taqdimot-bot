@@ -1,83 +1,80 @@
 import os
-from flask import Flask, request
 import requests
+from flask import Flask, request
 from pptx import Presentation
-import openai
+from fpdf import FPDF
 
-TOKEN = os.environ.get("BOT_TOKEN")
-OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
-
-openai.api_key = OPENAI_API_KEY
+BOT_TOKEN = os.environ.get("BOT_TOKEN")
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 
 app = Flask(__name__)
 
 def send_message(chat_id, text):
-    url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
     requests.post(url, data={"chat_id": chat_id, "text": text})
 
-def send_document(chat_id, file_path):
-    url = f"https://api.telegram.org/bot{TOKEN}/sendDocument"
-    with open(file_path, "rb") as f:
+def send_document(chat_id, file):
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendDocument"
+    with open(file, "rb") as f:
         requests.post(url, files={"document": f}, data={"chat_id": chat_id})
 
-def generate_slides(topic):
+def ask_gemini(prompt):
 
-    prompt = f"""
-    {topic} haqida taqdimot uchun 8 ta slide yoz.
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key={GEMINI_API_KEY}"
 
-    format:
+    data = {
+        "contents":[
+            {
+                "parts":[
+                    {"text": prompt}
+                ]
+            }
+        ]
+    }
 
-    Slide 1: title
-    text
+    r = requests.post(url, json=data)
 
-    Slide 2: title
-    text
-    """
+    result = r.json()
 
-    response = openai.ChatCompletion.create(
-        model="gpt-3.5-turbo",
-        messages=[{"role":"user","content":prompt}]
-    )
+    return result["candidates"][0]["content"]["parts"][0]["text"]
 
-    text = response["choices"][0]["message"]["content"]
+def create_ppt(topic):
 
-    slides = text.split("Slide")
-
-    result = []
-
-    for slide in slides:
-        if ":" in slide:
-            parts = slide.split("\n",1)
-            title = parts[0].replace(":","").strip()
-            body = parts[1].strip() if len(parts)>1 else ""
-            result.append((title,body))
-
-    return result
-
-
-def create_presentation(topic):
-
-    slides = generate_slides(topic)
+    text = ask_gemini(f"{topic} haqida taqdimot uchun 10 ta qisqa punkt yoz")
 
     prs = Presentation()
 
-    title_slide = prs.slides.add_slide(prs.slide_layouts[0])
-    title_slide.shapes.title.text = topic
-    title_slide.placeholders[1].text = "AI yordamida yaratilgan taqdimot"
+    slide = prs.slides.add_slide(prs.slide_layouts[0])
+    slide.shapes.title.text = topic
+    slide.placeholders[1].text = "AI yaratgan taqdimot"
 
-    for title, body in slides:
-
-        slide = prs.slides.add_slide(prs.slide_layouts[1])
-        slide.shapes.title.text = title
-        slide.placeholders[1].text = body[:700]
+    slide = prs.slides.add_slide(prs.slide_layouts[1])
+    slide.shapes.title.text = "Ma'lumot"
+    slide.placeholders[1].text = text
 
     file = "presentation.pptx"
     prs.save(file)
 
     return file
 
+def create_pdf(topic):
 
-@app.route(f"/{TOKEN}", methods=["POST"])
+    text = ask_gemini(f"{topic} haqida referat yoz")
+
+    pdf = FPDF()
+    pdf.add_page()
+    pdf.set_font("Arial", size=12)
+
+    for line in text.split("\n"):
+        pdf.cell(0,10,line,ln=True)
+
+    file = "referat.pdf"
+    pdf.output(file)
+
+    return file
+
+
+@app.route(f"/{BOT_TOKEN}", methods=["POST"])
 def webhook():
 
     update = request.json
@@ -89,23 +86,52 @@ def webhook():
 
         if text == "/start":
 
-            send_message(chat_id,"Mavzuni yuboring\nMasalan: Sun'iy intellekt")
+            send_message(chat_id,
+            "🤖 SUPER GEMINI AI BOT\n\n"
+            "Buyruqlar:\n"
+            "/ai savol\n"
+            "/ppt mavzu\n"
+            "/referat mavzu")
 
-        else:
+        elif text.startswith("/ai"):
 
-            send_message(chat_id,"🤖 AI taqdimot tayyorlamoqda...")
+            q = text.replace("/ai","")
 
-            file = create_presentation(text)
+            answer = ask_gemini(q)
+
+            send_message(chat_id, answer)
+
+        elif text.startswith("/ppt"):
+
+            topic = text.replace("/ppt","")
+
+            send_message(chat_id,"📊 Taqdimot tayyorlanmoqda...")
+
+            file = create_ppt(topic)
 
             send_document(chat_id,file)
 
-    return "ok"
+        elif text.startswith("/referat"):
 
+            topic = text.replace("/referat","")
+
+            send_message(chat_id,"📄 Referat tayyorlanmoqda...")
+
+            file = create_pdf(topic)
+
+            send_document(chat_id,file)
+
+        else:
+
+            answer = ask_gemini(text)
+
+            send_message(chat_id,answer)
+
+    return "ok"
 
 @app.route("/")
 def home():
-    return "Bot ishlayapti"
-
+    return "Gemini AI bot ishlayapti 🚀"
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT",10000))
