@@ -1,7 +1,0 @@
-flask
-requests
-python-pptx
-gunicorn
-fpdf
-pyTelegramBotAPI
-google-generativeai
